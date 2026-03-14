@@ -31,6 +31,7 @@ from sklearn.metrics import (
 from sklearn.model_selection import RandomizedSearchCV, cross_validate, train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import LabelEncoder, OneHotEncoder
+from sklearn.utils import resample
 
 
 TARGET_CANDIDATES = [
@@ -498,6 +499,46 @@ def _compute_cv_metrics(
     return cv_metrics
 
 
+def balance_training_data(
+    X: pd.DataFrame, y: Any, strategy: str, random_state: int
+) -> tuple[pd.DataFrame, Any]:
+    if strategy == "none":
+        return X, y
+    if strategy not in {"undersample", "oversample"}:
+        raise ValueError(f"Unknown balance strategy: {strategy}")
+
+    y_series = pd.Series(y, index=X.index, name="_target_")
+    data = X.copy()
+    data["_target_"] = y_series
+
+    class_counts = data["_target_"].value_counts(dropna=False)
+    if class_counts.empty:
+        return X, y
+
+    if strategy == "undersample":
+        target_n = int(class_counts.min())
+        replace = False
+    else:
+        target_n = int(class_counts.max())
+        replace = True
+
+    parts = []
+    for _, group in data.groupby("_target_", sort=False):
+        if group.empty:
+            continue
+        parts.append(
+            resample(group, replace=replace, n_samples=target_n, random_state=random_state)
+        )
+
+    balanced = pd.concat(parts, ignore_index=True)
+    balanced = balanced.sample(frac=1.0, random_state=random_state).reset_index(drop=True)
+
+    y_balanced = balanced.pop("_target_")
+    if isinstance(y, np.ndarray):
+        y_balanced = y_balanced.to_numpy()
+    return balanced, y_balanced
+
+
 def compare_models_cv(
     df: pd.DataFrame,
     target: str,
@@ -562,6 +603,7 @@ def train_and_evaluate(
     run_eda_reports: bool = False,
     eda_dir: Optional[Path] = None,
     task_override: Optional[str] = None,
+    balance_strategy: str = "none",
 ) -> TrainResult:
     df = normalize_columns(df)
     df = drop_empty_columns(df)
@@ -604,6 +646,11 @@ def train_and_evaluate(
     except ValueError:
         X_train, X_test, y_train, y_test = train_test_split(
             X, y, test_size=test_size, random_state=random_state, stratify=None
+        )
+
+    if task == "classification" and balance_strategy != "none":
+        X_train, y_train = balance_training_data(
+            X_train, y_train, balance_strategy, random_state
         )
 
     best_params = None

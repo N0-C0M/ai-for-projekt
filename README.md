@@ -1,4 +1,4 @@
-﻿# Прогноз посещаемости культурных событий
+﻿﻿# Прогноз посещаемости культурных событий
 
 Цель: построить модель машинного обучения, которая по историческим данным прогнозирует ожидаемую посещаемость/популярность событий (фестивали, выставки, мастер‑классы и т.п.).
 
@@ -14,6 +14,7 @@
 - Метрики качества, отчёт классификации, матрица ошибок.
 - Прогноз для синтетического и пользовательского примера.
 - Локальная LLM‑сводка результатов (Ollama).
+- Балансировка классов в train‑выборке через `--balance` (undersample/oversample).
 - Автосохранение прогресса обучения в `training_runs/`.
 
 ## Подход
@@ -24,9 +25,10 @@
 - EDA‑графики и сводка сохраняются в `reports/`: `eda_summary.csv`, распределение целевой переменной, графики по числовым/категориальным признакам и связи признаков с целевой переменной (корреляции, boxplot/scatter, групповые средние). Чтобы обновить, запустите `python train.py --data ai_event_dataset.xlsx` (EDA включён по умолчанию, отключить можно флагом `--no-eda`).
 - При запуске с `--cv` дополнительно сохраняются `reports/cv_metrics.json` и сравнение 2‑3 моделей в `reports/model_comparison.csv`.
 
-## EDA‑выводы
-- Распределение целевой переменной несбалансировано (класс `1` встречается чаще), поэтому важна метрика `f1_macro`.
-- Категориальные признаки (тип события, тематика, день недели, сезон) показывают различия в средних значениях посещаемости, а линейные связи числовых признаков слабее.
+## EDA‑выводы (графики в `reports/`)
+- `target_attendance_score.png`: распределение классов несбалансировано (класс `1` встречается чаще: 100 vs 51/49), поэтому важна метрика `f1_macro`.
+- `rel_cat_season_by_attendance_score.png` и `rel_cat_event_type_by_attendance_score.png`: сезон и тип события сдвигают среднее значение посещаемости (зима/лето выше, весна/осень ниже; фестивали/мастер‑классы чуть выше лекций/выставок).
+- `rel_numeric_corr.png` + `rel_num_budget_category_by_attendance_score.png`: линейные связи числовых признаков с целевой слабые (|r| < 0.06), значит важнее сочетания категориальных признаков.
 
 ## Выбор признаков
 - Используются все предоставленные признаки, кроме `id` как служебного идентификатора.
@@ -39,7 +41,19 @@
 ## Результат
 - Пример метрик (запуск `training_runs/20260314_142305`): `accuracy = 0.45`, `f1_macro = 0.214` (см. `training_runs/20260314_142305/classification_report.json`, `training_runs/20260314_142305/confusion_matrix.csv`).
 - Интерпретация ошибок по классам: модель хорошо ловит средний класс (label `1`), но почти не распознаёт крайние классы (`0` и `2`), что видно по нулевому F1 для них. По матрице ошибок большинство объектов классов `0` и `2` отнесены к классу `1`, поэтому `f1_macro` важнее, чем одна `accuracy`.
-- План улучшений: балансировка классов (веса/ресэмплинг), расширение признаков, кросс‑валидация и тюнинг гиперпараметров.
+- План улучшений: расширение признаков, более системный тюнинг, анализ ошибок по редким классам, эксперименты с калибровкой/порогами.
+
+## Кросс‑валидация (2026‑03‑14)
+- Запуск: `python train.py --data ai_event_dataset.xlsx --task classification --model rf --cv 5 --seed 42 --no-eda --report-dir reports/cv_run`
+- 5-fold CV: `accuracy_mean = 0.420`, `accuracy_std = 0.029`, `f1_macro_mean = 0.239`, `f1_macro_std = 0.032` (см. `reports/cv_run/cv_metrics.json`).
+- Сравнение моделей сохранено в `reports/cv_run/model_comparison.csv`.
+
+## Эксперимент с балансировкой (2026‑03‑14)
+- Запуски (test split 20%, seed 42):
+- `baseline`: `python train.py --data ai_event_dataset.xlsx --task classification --model rf --test-size 0.2 --seed 42 --no-eda --report-dir reports/exp_baseline`
+- `oversample`: `python train.py --data ai_event_dataset.xlsx --task classification --model rf --test-size 0.2 --seed 42 --no-eda --balance oversample --report-dir reports/exp_oversample`
+- Метрики (holdout): `baseline` accuracy = 0.400, f1_macro = 0.194; `oversample` accuracy = 0.325, f1_macro = 0.233 (см. `reports/exp_baseline/metrics.json`, `reports/exp_oversample/metrics.json`).
+- Вывод: oversampling повышает `f1_macro` на редких классах, но снижает `accuracy`, поэтому для дисбаланса ориентируемся на `f1_macro`.
 
 ## Краткий вывод
 Для текущего датасета линейные связи числовых признаков с целевой переменной слабые (корреляции по модулю меньше 0.1), поэтому важнее учитывать категориальные факторы и их сочетания. По средним значениям целевой переменной заметны различия между типами событий, днями недели и сезонами, что подтверждает смысл использования категориальных признаков.
@@ -58,6 +72,8 @@
    python train.py --data ai_event_dataset.xlsx
    ```
    Можно явно задать тип задачи: `python train.py --data ai_event_dataset.xlsx --task classification`
+   Пример CV: `python train.py --data ai_event_dataset.xlsx --task classification --model rf --cv 5 --seed 42 --no-eda --report-dir reports/cv_run`
+   Пример балансировки: `python train.py --data ai_event_dataset.xlsx --task classification --model rf --balance oversample --seed 42 --no-eda --report-dir reports/exp_oversample`
 4. Веб‑интерфейс Streamlit (опционально):
    ```bash
    streamlit run app.py

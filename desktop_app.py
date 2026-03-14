@@ -33,6 +33,9 @@ MODEL_LABELS = {
 MODEL_LABELS_LIST = [MODEL_LABELS[m] for m in MODEL_CHOICES]
 LABEL_TO_MODEL = {v: k for k, v in MODEL_LABELS.items()}
 ATTENDANCE_LABELS = {0: "Низкая", 1: "Средняя", 2: "Высокая"}
+DURATION_BIN_LABELS = ["0-2", "2-4", "4-6", "6-8", "8+"]
+TEMP_BIN_LABELS = ["< -5", "-5..0", "0..10", "10..20", "20..30", "30+"]
+WEEKEND_LABELS = ["0", "1"]
 
 
 class DesktopApp(tk.Tk):
@@ -214,6 +217,27 @@ class DesktopApp(tk.Tk):
         ttk.Label(self.predict_tab, textvariable=self.prediction_result_var).pack(
             anchor="w", padx=10, pady=6
         )
+
+        self.prediction_actions = ttk.Frame(self.predict_tab)
+        self.prediction_actions.pack(fill="x", padx=10, pady=(0, 6))
+        self.prediction_actions.columnconfigure(0, weight=1)
+        self.prediction_actions.columnconfigure(1, weight=1)
+
+        self.predict_button = ttk.Button(
+            self.prediction_actions,
+            text="Рассчитать прогноз",
+            command=self._predict_custom,
+            state="disabled",
+        )
+        self.predict_button.grid(row=0, column=0, sticky="ew", padx=(0, 4))
+
+        self.duration_bin_button = ttk.Button(
+            self.prediction_actions,
+            text="Рассчитать duration_bin",
+            command=self._fill_duration_bin,
+            state="disabled",
+        )
+        self.duration_bin_button.grid(row=0, column=1, sticky="ew", padx=(4, 0))
 
         container = ttk.Frame(self.predict_tab)
         container.pack(fill="both", expand=True)
@@ -523,15 +547,15 @@ class DesktopApp(tk.Tk):
 
         self.prediction_inputs = {}
         if self.result is None or self.df is None:
+            self._update_prediction_buttons()
             return
 
         for row, col in enumerate(self.result.feature_columns):
             ttk.Label(self.prediction_frame, text=str(col)).grid(row=row, column=0, sticky="w", pady=2)
             default = self.result.synthetic_sample[col].iloc[0]
             if col in self.result.categorical_cols:
-                options = self.df[col].dropna().astype(str).unique().tolist()
-                options = sorted(options) if options else []
-                var = tk.StringVar(value=str(default) if default is not None else "")
+                options, default_value = self._get_categorical_options(col, default)
+                var = tk.StringVar(value=default_value)
                 if options and len(options) <= 50:
                     widget = ttk.Combobox(
                         self.prediction_frame, textvariable=var, values=options, state="readonly"
@@ -545,11 +569,7 @@ class DesktopApp(tk.Tk):
             widget.grid(row=row, column=1, sticky="ew", padx=5, pady=2)
             self.prediction_frame.columnconfigure(1, weight=1)
             self.prediction_inputs[col] = var
-
-        btn_row = len(self.result.feature_columns) + 1
-        ttk.Button(self.prediction_frame, text="Предсказать", command=self._predict_custom).grid(
-            row=btn_row, column=0, columnspan=2, sticky="ew", pady=8
-        )
+        self._update_prediction_buttons()
 
     def _predict_custom(self) -> None:
         if self.result is None:
@@ -575,6 +595,31 @@ class DesktopApp(tk.Tk):
         proba = self._predict_proba(input_df)
         class_labels = self._get_class_labels()
         self.prediction_result_var.set(self._format_prediction(pred, proba, class_labels))
+
+    def _fill_duration_bin(self) -> None:
+        if self.result is None:
+            return
+        duration_col, duration_bin_col = self._get_duration_columns()
+        if not duration_col or not duration_bin_col:
+            messagebox.showwarning("Прогноз", "Колонки duration/duration_bin не найдены.")
+            return
+        duration_var = self.prediction_inputs.get(duration_col)
+        duration_bin_var = self.prediction_inputs.get(duration_bin_col)
+        if duration_var is None or duration_bin_var is None:
+            messagebox.showwarning("Прогноз", "Не найдено поле ввода для duration/duration_bin.")
+            return
+        raw_value = duration_var.get().strip()
+        try:
+            hours = float(raw_value.replace(",", "."))
+        except ValueError:
+            messagebox.showerror("Ошибка ввода", f"Некорректное число в поле: {duration_col}")
+            return
+        bin_label = self._duration_to_bin(hours)
+        if not bin_label:
+            messagebox.showwarning("Прогноз", "Не удалось рассчитать duration_bin.")
+            return
+        duration_bin_var.set(bin_label)
+        self._set_status("duration_bin рассчитан")
 
     def _run_summary(self) -> None:
         if not self._ensure_llm_ready():
@@ -669,6 +714,73 @@ class DesktopApp(tk.Tk):
             return float(str(value).replace(",", "."))
         except (TypeError, ValueError):
             return default
+
+    def _get_categorical_options(self, col: str, default) -> tuple[list, str]:
+        default_value = "" if pd.isna(default) else str(default)
+        if self.df is not None and col in self.df.columns:
+            options = self.df[col].dropna().astype(str).unique().tolist()
+            options = sorted(options) if options else []
+            return options, default_value
+
+        col_lower = str(col).lower()
+        if "duration_bin" in col_lower or "duratetion_bin" in col_lower:
+            return DURATION_BIN_LABELS, default_value
+        if "temp_bin" in col_lower:
+            return TEMP_BIN_LABELS, default_value
+        if "is_weekend" in col_lower:
+            return WEEKEND_LABELS, default_value
+        return [], default_value
+
+    @staticmethod
+    def _find_feature(columns: list, needles: list[str]) -> str | None:
+        for col in columns:
+            col_lower = str(col).lower()
+            for needle in needles:
+                if needle in col_lower:
+                    return col
+        return None
+
+    def _get_duration_columns(self) -> tuple[str | None, str | None]:
+        if self.result is None:
+            return None, None
+        duration_col = self._find_feature(
+            self.result.feature_columns,
+            ["duration_hours", "duration", "продолжительность"],
+        )
+        duration_bin_col = self._find_feature(
+            self.result.feature_columns,
+            ["duration_bin", "duratetion_bin", "duration bin", "duratetion bin"],
+        )
+        return duration_col, duration_bin_col
+
+    @staticmethod
+    def _duration_to_bin(value: float) -> str | None:
+        try:
+            hours = float(value)
+        except (TypeError, ValueError):
+            return None
+        if hours <= 2:
+            return "0-2"
+        if hours <= 4:
+            return "2-4"
+        if hours <= 6:
+            return "4-6"
+        if hours <= 8:
+            return "6-8"
+        return "8+"
+
+    def _update_prediction_buttons(self) -> None:
+        if not hasattr(self, "predict_button"):
+            return
+        ready = self.result is not None and self.df is not None and bool(self.prediction_inputs)
+        self.predict_button.configure(state="normal" if ready else "disabled")
+
+        duration_col, duration_bin_col = self._get_duration_columns()
+        duration_ready = ready and bool(duration_col and duration_bin_col)
+        if hasattr(self, "duration_bin_button"):
+            self.duration_bin_button.configure(
+                state="normal" if duration_ready else "disabled"
+            )
 
     def _get_class_labels(self) -> list | None:
         if self.result is None or self.result.task != "classification":

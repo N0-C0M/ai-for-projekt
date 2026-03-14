@@ -51,6 +51,48 @@ def get_data(uploaded, local_path: str) -> pd.DataFrame:
     raise FileNotFoundError("Датасет не найден. Загрузите файл или укажите корректный путь.")
 
 
+def _find_feature(columns, needles):
+    for col in columns:
+        col_lower = str(col).lower()
+        for needle in needles:
+            if needle in col_lower:
+                return col
+    return None
+
+
+def _duration_to_bin(value):
+    try:
+        hours = float(value)
+    except (TypeError, ValueError):
+        return None
+    if hours <= 2:
+        return "0-2"
+    if hours <= 4:
+        return "2-4"
+    if hours <= 6:
+        return "4-6"
+    if hours <= 8:
+        return "6-8"
+    return "8+"
+
+
+def _categorical_options(df: pd.DataFrame, col: str, default):
+    default_value = "" if pd.isna(default) else str(default)
+    if col in df.columns:
+        options = df[col].dropna().astype(str).unique().tolist()
+        options = sorted(options) if options else []
+        return options, default_value
+
+    col_lower = str(col).lower()
+    if "duration_bin" in col_lower or "duratetion_bin" in col_lower:
+        return ["0-2", "2-4", "4-6", "6-8", "8+"], default_value
+    if "temp_bin" in col_lower:
+        return ["< -5", "-5..0", "0..10", "10..20", "20..30", "30+"], default_value
+    if "is_weekend" in col_lower:
+        return ["0", "1"], default_value
+    return [], default_value
+
+
 def save_training_progress(result, model_name: str, params: dict, files: list) -> None:
     base_dir = Path("training_runs")
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -208,7 +250,11 @@ if st.button("Обучить модель"):
             st.warning(f"Не удалось сохранить прогресс обучения: {exc}")
 
 result = st.session_state.get("result")
-if result is not None:
+if result is None:
+    st.subheader("Прогноз пользовательского события")
+    st.info("Сначала обучите модель, чтобы рассчитать прогноз.")
+    st.button("Рассчитать прогноз", disabled=True)
+else:
     st.subheader("Метрики")
     st.json(result.metrics)
 
@@ -237,25 +283,82 @@ if result is not None:
     st.write(result.synthetic_prediction)
 
     st.subheader("Прогноз пользовательского события")
+    duration_col = _find_feature(
+        result.feature_columns,
+        ["duration_hours", "duration", "продолжительность"],
+    )
+    duration_bin_col = _find_feature(
+        result.feature_columns,
+        ["duration_bin", "duratetion_bin", "duration bin", "duratetion bin"],
+    )
+    duration_bin_options = []
+    if duration_bin_col:
+        if duration_bin_col in df.columns:
+            duration_bin_options = (
+                df[duration_bin_col].dropna().astype(str).unique().tolist()
+            )
+            duration_bin_options = (
+                sorted(duration_bin_options) if duration_bin_options else []
+            )
+        if not duration_bin_options:
+            duration_bin_options = ["0-2", "2-4", "4-6", "6-8", "8+"]
+
+    if duration_col and duration_bin_col:
+        duration_key = f"pred_{duration_col}"
+        duration_bin_key = f"pred_{duration_bin_col}"
+        if st.button("Рассчитать duration_bin"):
+            raw_value = st.session_state.get(
+                duration_key,
+                result.synthetic_sample[duration_col].iloc[0]
+                if duration_col in result.synthetic_sample.columns
+                else None,
+            )
+            try:
+                hours = float(str(raw_value).replace(",", "."))
+            except (TypeError, ValueError):
+                st.warning(f"Некорректное число в поле: {duration_col}")
+            else:
+                bin_label = _duration_to_bin(hours)
+                if not bin_label:
+                    st.warning("Не удалось рассчитать duration_bin.")
+                elif duration_bin_options and bin_label not in duration_bin_options:
+                    st.warning("duration_bin вне диапазона доступных значений.")
+                else:
+                    st.session_state[duration_bin_key] = bin_label
+
     with st.form("predict_form"):
         inputs = {}
         for col in result.categorical_cols:
-            options = df[col].dropna().unique().tolist()
-            options = sorted(options) if options else []
             default = result.synthetic_sample[col].iloc[0]
+            options, default_value = _categorical_options(df, col, default)
+            key = f"pred_{col}"
+            if duration_bin_col and col == duration_bin_col:
+                options = [str(opt) for opt in options]
+                default_value = "" if pd.isna(default_value) else str(default_value)
             if len(options) > 50:
-                inputs[col] = st.text_input(col, value=str(default) if default is not None else "")
+                inputs[col] = st.text_input(
+                    col,
+                    value=default_value,
+                    key=key,
+                )
             else:
-                idx = options.index(default) if default in options else 0
-                inputs[col] = st.selectbox(col, options, index=idx) if options else ""
+                if options:
+                    idx = options.index(default_value) if default_value in options else 0
+                    inputs[col] = st.selectbox(col, options, index=idx, key=key)
+                else:
+                    inputs[col] = st.text_input(
+                        col,
+                        value=default_value,
+                        key=key,
+                    )
         for col in result.numeric_cols:
             default = result.synthetic_sample[col].iloc[0]
             try:
                 default = float(default)
             except Exception:
                 default = 0.0
-            inputs[col] = st.number_input(col, value=default)
-        submitted = st.form_submit_button("Предсказать")
+            inputs[col] = st.number_input(col, value=default, key=f"pred_{col}")
+        submitted = st.form_submit_button("Рассчитать прогноз")
     if submitted:
         input_df = pd.DataFrame([inputs], columns=result.feature_columns)
         pred = result.pipeline.predict(input_df)[0]

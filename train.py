@@ -77,6 +77,13 @@ def main() -> None:
         help="Число фолдов для тюнинга гиперпараметров.",
     )
     parser.add_argument(
+        "--balance",
+        type=str,
+        default="none",
+        choices=["none", "undersample", "oversample"],
+        help="????????????? ?????? ? train-???????: none/undersample/oversample.",
+    )
+    parser.add_argument(
         "--seed",
         type=int,
         default=42,
@@ -186,6 +193,7 @@ def main() -> None:
         run_eda_reports=not args.no_eda,
         eda_dir=Path(args.eda_dir),
         task_override=None if args.task == "auto" else args.task,
+        balance_strategy=args.balance,
     )
 
     print(f"Задача: {result.task}")
