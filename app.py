@@ -154,7 +154,8 @@ except Exception as exc:
 df = normalize_columns(df)
 
 st.subheader("Предпросмотр данных")
-st.dataframe(df.head(10), use_container_width=True)
+st.dataframe(df, use_container_width=True)
+st.caption("Показаны все строки. Обучение использует полный датасет.")
 
 with st.expander("Базовая статистика"):
     st.write("Строк:", df.shape[0])
@@ -264,7 +265,7 @@ if result is not None:
 
     if llm_enabled:
         st.subheader("LLM-анализ")
-        context = build_llm_context(df, result, top_n=10)
+        context = build_llm_context(df, result, top_n=5, compact=True)
         question = st.text_area("Задайте вопрос о данных или результатах", value="")
 
         col1, col2 = st.columns(2)
@@ -272,21 +273,27 @@ if result is not None:
             if st.button("Сгенерировать сводку"):
                 with st.spinner("Обращаемся к локальной LLM..."):
                     messages = build_summary_messages(context)
-                    summary = chat(
-                        messages,
-                        provider=llm_provider,
-                        model=llm_model or None,
-                        base_url=llm_base_url or None,
-                    )
-                    st.write(summary)
+                    try:
+                        summary = chat(
+                            messages,
+                            provider=llm_provider,
+                            model=llm_model or None,
+                            base_url=llm_base_url or None,
+                        )
+                        st.write(summary)
+                    except Exception as exc:
+                        st.error(f"Ошибка LLM-сводки: {exc}")
         with col2:
             if st.button("Задать вопрос") and question.strip():
                 with st.spinner("Обращаемся к локальной LLM..."):
                     messages = build_qa_messages(context, question.strip())
-                    answer = chat(
-                        messages,
-                        provider=llm_provider,
-                        model=llm_model or None,
-                        base_url=llm_base_url or None,
-                    )
-                    st.write(answer)
+                    try:
+                        answer = chat(
+                            messages,
+                            provider=llm_provider,
+                            model=llm_model or None,
+                            base_url=llm_base_url or None,
+                        )
+                        st.write(answer)
+                    except Exception as exc:
+                        st.error(f"Ошибка LLM-ответа: {exc}")

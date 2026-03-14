@@ -32,6 +32,7 @@ MODEL_LABELS = {
 }
 MODEL_LABELS_LIST = [MODEL_LABELS[m] for m in MODEL_CHOICES]
 LABEL_TO_MODEL = {v: k for k, v in MODEL_LABELS.items()}
+ATTENDANCE_LABELS = {0: "Низкая", 1: "Средняя", 2: "Высокая"}
 
 
 class DesktopApp(tk.Tk):
@@ -333,6 +334,7 @@ class DesktopApp(tk.Tk):
             info_lines.extend(self.loaded_files)
             info_lines.append("")
 
+        preview_rows = min(50, self.df.shape[0])
         info_lines.extend([
             f"Строк: {self.df.shape[0]}",
             f"Столбцов: {self.df.shape[1]}",
@@ -340,8 +342,8 @@ class DesktopApp(tk.Tk):
             "Колонки:",
             ", ".join(map(str, self.df.columns)),
             "",
-            "Первые 10 строк:",
-            self.df.head(10).to_string(index=False),
+            f"Первые {preview_rows} строк (для просмотра, обучение использует все данные):",
+            self.df.head(preview_rows).to_string(index=False),
         ])
         self._set_text(self.data_text, "\n".join(info_lines))
         self._set_status("Данные загружены")
@@ -452,7 +454,10 @@ class DesktopApp(tk.Tk):
             lines.append(self.result.feature_importance.to_string(index=False))
 
         lines.append("")
-        lines.append(f"Прогноз для синтетического примера: {self.result.synthetic_prediction}")
+        lines.append("Прогноз для синтетического примера:")
+        syn_proba = self._predict_proba(self.result.synthetic_sample)
+        syn_labels = self._get_class_labels()
+        lines.append(self._format_prediction(self.result.synthetic_prediction, syn_proba, syn_labels))
 
         self._set_text(self.results_text, "\n".join(lines))
         self._build_prediction_form()
@@ -567,7 +572,9 @@ class DesktopApp(tk.Tk):
         if self.result.task == "classification" and self.result.label_encoder is not None:
             pred = self.result.label_encoder.inverse_transform([pred])[0]
 
-        self.prediction_result_var.set(f"Прогноз: {pred}")
+        proba = self._predict_proba(input_df)
+        class_labels = self._get_class_labels()
+        self.prediction_result_var.set(self._format_prediction(pred, proba, class_labels))
 
     def _run_summary(self) -> None:
         if not self._ensure_llm_ready():
@@ -576,7 +583,7 @@ class DesktopApp(tk.Tk):
         host = self.ollama_host
         model = self._resolve_llm_model()
         timeout = self.ollama_timeout
-        context = build_llm_context(self.df, self.result, top_n=10)
+        context = build_llm_context(self.df, self.result, top_n=5, compact=True)
         messages = build_summary_messages(context)
 
         def worker() -> None:
@@ -584,7 +591,8 @@ class DesktopApp(tk.Tk):
                 client = OllamaClient(host=host, timeout=timeout)
                 summary = client.chat(messages, model=model, stream=False)
             except Exception as exc:
-                self.after(0, lambda: messagebox.showerror("LLM", str(exc)))
+                error_text = str(exc)
+                self.after(0, lambda msg=error_text: messagebox.showerror("LLM", msg))
                 return
 
             self.after(0, lambda: self._set_text(self.summary_text, summary))
@@ -605,7 +613,7 @@ class DesktopApp(tk.Tk):
         host = self.ollama_host
         model = self._resolve_llm_model()
         timeout = self.ollama_timeout
-        context = build_llm_context(self.df, self.result, top_n=10)
+        context = build_llm_context(self.df, self.result, top_n=5, compact=True)
         messages = build_qa_messages(context, question)
 
         def worker() -> None:
@@ -613,7 +621,8 @@ class DesktopApp(tk.Tk):
                 client = OllamaClient(host=host, timeout=timeout)
                 answer = client.chat(messages, model=model, stream=False)
             except Exception as exc:
-                self.after(0, lambda: messagebox.showerror("LLM", str(exc)))
+                error_text = str(exc)
+                self.after(0, lambda msg=error_text: messagebox.showerror("LLM", msg))
                 return
 
             self.after(0, lambda: self._set_text(self.answer_text, answer))
@@ -660,6 +669,92 @@ class DesktopApp(tk.Tk):
             return float(str(value).replace(",", "."))
         except (TypeError, ValueError):
             return default
+
+    def _get_class_labels(self) -> list | None:
+        if self.result is None or self.result.task != "classification":
+            return None
+        model = self.result.pipeline.named_steps.get("model")
+        if model is None or not hasattr(model, "classes_"):
+            return None
+        labels = list(model.classes_)
+        if self.result.label_encoder is not None:
+            try:
+                labels = self.result.label_encoder.inverse_transform(labels)
+            except Exception:
+                labels = [str(label) for label in labels]
+        return list(labels)
+
+    def _predict_proba(self, input_df: pd.DataFrame):
+        if self.result is None or self.result.task != "classification":
+            return None
+        try:
+            proba = self.result.pipeline.predict_proba(input_df)[0]
+        except Exception:
+            return None
+        return proba
+
+    def _get_attendance_label_map(self) -> dict | None:
+        if self.result is None or self.result.task != "classification":
+            return None
+        target = str(self.result.target).lower()
+        if not any(k in target for k in ("attendance", "посещ", "популяр", "category", "катег", "score")):
+            return None
+        if self.result.report:
+            class_keys = [
+                k
+                for k in self.result.report.keys()
+                if k not in ("accuracy", "macro avg", "weighted avg")
+            ]
+            if not {"0", "1", "2"}.issubset(set(map(str, class_keys))):
+                return None
+        return ATTENDANCE_LABELS
+
+    def _label_with_attendance(self, label) -> str:
+        label_text = str(label)
+        label_map = self._get_attendance_label_map()
+        if not label_map:
+            return label_text
+        try:
+            value = int(label)
+        except (TypeError, ValueError):
+            return label_text
+        if value in label_map:
+            return f"{label_map[value]} ({value})"
+        return label_text
+
+    def _format_prediction(self, pred, proba=None, class_labels=None) -> str:
+        if self.result is None:
+            return f"Прогноз: {pred}"
+
+        if self.result.task == "classification":
+            label_text = self._label_with_attendance(pred)
+            lines = [f"Прогноз: {label_text}"]
+            if proba is not None and class_labels is not None:
+                try:
+                    pairs = list(zip(class_labels, proba))
+                    pairs.sort(key=lambda item: item[1], reverse=True)
+                    if pairs:
+                        top_label, top_prob = pairs[0]
+                        lines.append(f"Уверенность: {top_prob * 100:.1f}%")
+                        top_parts = []
+                        for label, prob in pairs[:3]:
+                            top_parts.append(f"{self._label_with_attendance(label)}: {prob * 100:.1f}%")
+                        lines.append("Распределение: " + ", ".join(top_parts))
+                except Exception:
+                    pass
+            return "\n".join(lines)
+
+        try:
+            pred_value = float(pred)
+        except (TypeError, ValueError):
+            return f"Прогноз: {pred}"
+
+        target = str(self.result.target).lower()
+        if any(k in target for k in ("share", "ratio", "fill", "доля", "заполняем")) and 0 <= pred_value <= 1:
+            return f"Прогноз: {pred_value:.4f} (~{pred_value * 100:.1f}%)"
+        if 0 <= pred_value <= 1:
+            return f"Прогноз: {pred_value:.4f} (~{pred_value * 100:.1f}%)"
+        return f"Прогноз: {pred_value:.4f}"
 
 
 def _json_default(obj):

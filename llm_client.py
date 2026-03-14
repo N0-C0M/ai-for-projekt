@@ -24,10 +24,11 @@ def chat(
 
     if provider == "ollama":
         host = base_url or os.getenv("OLLAMA_HOST") or "http://localhost:11434"
-        model = model or os.getenv("OLLAMA_MODEL") or "llama3"
+        requested_model = (model or os.getenv("OLLAMA_MODEL") or "").strip()
+        model_name = _resolve_ollama_model(host, timeout, requested_model)
         client = OllamaClient(host=host, timeout=timeout)
         try:
-            return client.chat(messages, model=model, stream=False)
+            return client.chat(messages, model=model_name, stream=False)
         except OllamaError as exc:
             raise RuntimeError(str(exc)) from exc
 
@@ -52,14 +53,39 @@ def chat(
     raise ValueError("Неизвестный провайдер. Используйте 'ollama' или 'openai'.")
 
 
+def _resolve_ollama_model(host: str, timeout: int, requested_model: str) -> str:
+    client = OllamaClient(host=host, timeout=timeout)
+    try:
+        models = client.list_models()
+    except OllamaError as exc:
+        raise RuntimeError(str(exc)) from exc
+
+    names = [m.name for m in models if m.name]
+    if requested_model:
+        if requested_model in names:
+            return requested_model
+        if not names:
+            raise RuntimeError(
+                "В Ollama нет установленных моделей. Установите модель, например: ollama pull llama3.1"
+            )
+        raise RuntimeError(
+            f"Модель Ollama '{requested_model}' не найдена. Доступные: {', '.join(names)}"
+        )
+
+    if not names:
+        raise RuntimeError(
+            "В Ollama нет установленных моделей. Установите модель, например: ollama pull llama3.1"
+        )
+    return names[0]
+
+
 def build_summary_messages(context: Dict[str, Any], question: Optional[str] = None):
     system_msg = (
-        "Ты помощник по анализу данных. Отвечай на русском. "
-        "Будь кратким, практичным и упоминай ключевые риски или ограничения."
+        "Ты помощник по анализу данных. Отвечай на русском."
     )
     user_msg = (
-        "Сформулируй краткую сводку результатов обучения модели для прогноза "
-        "посещаемости культурных событий. Используй контекст ниже и дай 5–8 пунктов."
+        "Сделай очень короткую сводку результатов обучения модели. "
+        "Используй контекст ниже и дай 3–5 коротких пунктов."
     )
     if question:
         user_msg += f"\n\nВопрос пользователя: {question}"

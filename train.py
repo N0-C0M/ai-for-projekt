@@ -215,7 +215,8 @@ def main() -> None:
         print(f"Модель сохранена в: {save_path}")
 
     if args.llm_summary:
-        context = build_llm_context(df, result, top_n=args.llm_top_features)
+        top_n = min(args.llm_top_features, 5)
+        context = build_llm_context(df, result, top_n=top_n, compact=True)
         messages = build_summary_messages(context, question=args.llm_question)
         try:
             summary = chat(

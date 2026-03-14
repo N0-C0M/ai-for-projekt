@@ -499,18 +499,20 @@ def save_reports(result: TrainResult, report_dir: Path) -> None:
 
 
 def build_llm_context(
-    df: pd.DataFrame, result: TrainResult, top_n: int = 10
+    df: pd.DataFrame,
+    result: TrainResult,
+    top_n: int = 10,
+    compact: bool = False,
 ) -> Dict[str, Any]:
     missing = df.isna().mean().sort_values(ascending=False).head(10)
     top_features = []
     if result.feature_importance is not None:
         top_features = result.feature_importance.head(top_n).to_dict(orient="records")
 
-    return {
+    columns = list(df.columns)
+    payload: Dict[str, Any] = {
         "rows": int(df.shape[0]),
         "cols": int(df.shape[1]),
-        "columns": list(df.columns),
-        "missing_top": missing.to_dict(),
         "task": result.task,
         "target": result.target,
         "metrics": result.metrics,
@@ -519,6 +521,16 @@ def build_llm_context(
         "top_features": top_features,
         "synthetic_prediction": result.synthetic_prediction,
     }
+
+    if compact:
+        payload["columns_sample"] = columns[:10]
+        payload["columns_total"] = len(columns)
+        payload["missing_top"] = missing.head(3).to_dict()
+    else:
+        payload["columns"] = columns
+        payload["missing_top"] = missing.to_dict()
+
+    return payload
 
 
 def _json_default(obj: Any):
