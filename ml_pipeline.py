@@ -170,7 +170,10 @@ def run_eda(df: pd.DataFrame, target: str, out_dir: Path) -> None:
 
     target_path = out_dir / f"target_{target}.png"
     plt.figure(figsize=(6, 4))
-    if pd.api.types.is_numeric_dtype(df[target]) and df[target].nunique() > 10:
+    target_is_numeric = pd.api.types.is_numeric_dtype(df[target])
+    target_nunique = df[target].nunique(dropna=True)
+    target_is_continuous = target_is_numeric and target_nunique > 10
+    if target_is_continuous:
         sns.histplot(df[target], kde=True)
     else:
         sns.countplot(x=df[target])
@@ -196,6 +199,58 @@ def run_eda(df: pd.DataFrame, target: str, out_dir: Path) -> None:
         plt.tight_layout()
         plt.savefig(out_dir / f"cat_{col}.png", dpi=160)
         plt.close()
+
+    if numeric_cols:
+        corr_cols = numeric_cols + ([target] if target_is_numeric else [])
+        corr = df[corr_cols].corr()
+        size = min(10, max(5, len(corr_cols) * 0.6))
+        plt.figure(figsize=(size, size))
+        sns.heatmap(corr, cmap="coolwarm", center=0, square=True)
+        plt.tight_layout()
+        plt.savefig(out_dir / "rel_numeric_corr.png", dpi=160)
+        plt.close()
+
+    for col in numeric_cols:
+        plt.figure(figsize=(6, 4))
+        if target_is_continuous:
+            sns.scatterplot(data=df, x=col, y=target, alpha=0.6)
+            plt.ylabel(target)
+            plt.xlabel(col)
+            plt.tight_layout()
+            plt.savefig(out_dir / f"rel_num_{col}_vs_{target}.png", dpi=160)
+        else:
+            order = sorted(df[target].dropna().unique())
+            sns.boxplot(data=df, x=target, y=col, order=order)
+            plt.xticks(rotation=30, ha="right")
+            plt.tight_layout()
+            plt.savefig(out_dir / f"rel_num_{col}_by_{target}.png", dpi=160)
+        plt.close()
+
+    for col in categorical_cols:
+        data = df[[col, target]].dropna()
+        if data.empty:
+            continue
+        if target_is_continuous:
+            top = data[col].value_counts().head(20).index
+            data = data[data[col].isin(top)]
+            means = data.groupby(col)[target].mean().sort_values()
+            fig, ax = plt.subplots(figsize=(7, 4))
+            means.plot(kind="barh", ax=ax)
+            plt.xlabel(f"mean {target}")
+            plt.tight_layout()
+            plt.savefig(out_dir / f"rel_cat_{col}_target_mean.png", dpi=160)
+            plt.close()
+        else:
+            top = data[col].value_counts().head(15).index
+            ct = pd.crosstab(data[col], data[target])
+            ct = ct.loc[ct.index.isin(top)]
+            ct = ct.loc[ct.sum(axis=1).sort_values(ascending=False).index]
+            fig, ax = plt.subplots(figsize=(7, 4))
+            ct.plot(kind="bar", stacked=True, ax=ax)
+            plt.xticks(rotation=30, ha="right")
+            plt.tight_layout()
+            plt.savefig(out_dir / f"rel_cat_{col}_by_{target}.png", dpi=160)
+            plt.close()
 
 
 def build_synthetic_sample(
@@ -349,6 +404,54 @@ def _compute_cv_metrics(
             cv_metrics[f"{name}_mean"] = mean
             cv_metrics[f"{name}_std"] = std
     return cv_metrics
+
+
+def compare_models_cv(
+    df: pd.DataFrame,
+    target: str,
+    model_names: Optional[List[str]] = None,
+    cv: int = 3,
+    random_state: int = 42,
+) -> pd.DataFrame:
+    df = normalize_columns(df)
+    df = drop_empty_columns(df)
+    df = df.drop_duplicates().reset_index(drop=True)
+    df = df.dropna(subset=[target]).reset_index(drop=True)
+    X = df.drop(columns=[target])
+    X = coerce_numeric_columns(X)
+    y = df[target].copy()
+
+    task = infer_task(y, target)
+
+    if model_names is None:
+        model_names = ["rf", "gb", "hgb"]
+
+    unique_models: List[str] = []
+    for name in model_names:
+        if name in MODEL_CHOICES and name not in unique_models:
+            unique_models.append(name)
+
+    rows: List[Dict[str, Any]] = []
+    for name in unique_models:
+        preprocessor, _, _ = build_preprocess(X)
+        model = build_model(task, name, random_state)
+        pipeline = Pipeline(
+            steps=[
+                ("preprocess", preprocessor),
+                ("model", model),
+            ]
+        )
+        cv_metrics = _compute_cv_metrics(task, pipeline, X, y, cv)
+        rows.append({"model": name, **cv_metrics})
+
+    if not rows:
+        return pd.DataFrame()
+
+    result = pd.DataFrame(rows)
+    sort_col = "f1_macro_mean" if task == "classification" else "r2_mean"
+    if sort_col in result.columns:
+        result = result.sort_values(sort_col, ascending=False).reset_index(drop=True)
+    return result
 
 
 def train_and_evaluate(

@@ -8,6 +8,7 @@ from llm_client import build_summary_messages, chat
 from ml_pipeline import (
     MODEL_CHOICES,
     build_llm_context,
+    compare_models_cv,
     load_data,
     normalize_columns,
     pick_target,
@@ -203,6 +204,31 @@ def main() -> None:
 
     if not args.no_reports:
         save_reports(result, Path(args.report_dir))
+
+        if args.cv and args.cv > 1:
+            compare_models = [args.model] + [m for m in MODEL_CHOICES if m != args.model]
+            compare_models = compare_models[:3]
+            try:
+                comparison = compare_models_cv(
+                    df,
+                    target=target,
+                    model_names=compare_models,
+                    cv=args.cv,
+                    random_state=args.seed,
+                )
+                if not comparison.empty:
+                    report_dir = Path(args.report_dir)
+                    report_dir.mkdir(parents=True, exist_ok=True)
+                    comparison.to_csv(report_dir / "model_comparison.csv", index=False)
+                    comparison.to_json(
+                        report_dir / "model_comparison.json",
+                        orient="records",
+                        force_ascii=False,
+                        indent=2,
+                    )
+                    print(f"Сравнение моделей сохранено в {report_dir / 'model_comparison.csv'}")
+            except Exception as exc:
+                print(f"Не удалось выполнить сравнение моделей: {exc}")
 
     if args.save_model:
         try:
