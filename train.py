@@ -34,6 +34,13 @@ def main() -> None:
         help="Имя целевой колонки. Если не указано, определяется автоматически.",
     )
     parser.add_argument(
+        "--task",
+        type=str,
+        default="auto",
+        choices=["auto", "classification", "regression"],
+        help="Явно задать тип задачи: auto/classification/regression.",
+    )
+    parser.add_argument(
         "--model",
         type=str,
         default="rf",
@@ -178,6 +185,7 @@ def main() -> None:
         tune_cv=args.tune_cv,
         run_eda_reports=not args.no_eda,
         eda_dir=Path(args.eda_dir),
+        task_override=None if args.task == "auto" else args.task,
     )
 
     print(f"Задача: {result.task}")
@@ -218,6 +226,7 @@ def main() -> None:
                     model_names=compare_models,
                     cv=args.cv,
                     random_state=args.seed,
+                    task_override=None if args.task == "auto" else args.task,
                 )
                 if not comparison.empty:
                     report_dir = Path(args.report_dir)

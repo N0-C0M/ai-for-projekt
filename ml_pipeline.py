@@ -112,6 +112,84 @@ def coerce_numeric_columns(df: pd.DataFrame, threshold: float = 0.8) -> pd.DataF
     return df
 
 
+def _find_column(columns: List[str], needles: List[str]) -> Optional[str]:
+    for col in columns:
+        col_lower = str(col).lower()
+        for needle in needles:
+            if needle in col_lower:
+                return col
+    return None
+
+
+def _is_weekend_value(value: Any) -> Any:
+    if pd.isna(value):
+        return np.nan
+    if isinstance(value, (int, float, np.integer, np.floating)):
+        if 0 <= value <= 6:
+            return int(value >= 5)
+        if 1 <= value <= 7:
+            return int(value >= 6)
+        return np.nan
+    text = str(value).strip().lower()
+    if not text:
+        return np.nan
+    weekend_tokens = {
+        "sat",
+        "saturday",
+        "sun",
+        "sunday",
+        "сб",
+        "суббота",
+        "вс",
+        "воскресенье",
+        "суб",
+        "воск",
+    }
+    for token in weekend_tokens:
+        if text == token or text.startswith(token):
+            return 1
+    return 0
+
+
+def add_simple_features(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    columns = list(df.columns)
+
+    duration_col = _find_column(
+        columns, ["duration_hours", "duration", "продолжительность"]
+    )
+    if duration_col and "duration_bin" not in df.columns:
+        if pd.api.types.is_numeric_dtype(df[duration_col]) and df[duration_col].notna().any():
+            bins = [float("-inf"), 2, 4, 6, 8, float("inf")]
+            labels = ["0-2", "2-4", "4-6", "6-8", "8+"]
+            df["duration_bin"] = pd.cut(df[duration_col], bins=bins, labels=labels)
+
+    temp_col = _find_column(
+        columns, ["avg_temp", "average_temp", "temperature", "температур"]
+    )
+    if temp_col and "temp_bin" not in df.columns:
+        if pd.api.types.is_numeric_dtype(df[temp_col]) and df[temp_col].notna().any():
+            bins = [
+                float("-inf"),
+                -5,
+                0,
+                10,
+                20,
+                30,
+                float("inf"),
+            ]
+            labels = ["< -5", "-5..0", "0..10", "10..20", "20..30", "30+"]
+            df["temp_bin"] = pd.cut(df[temp_col], bins=bins, labels=labels)
+
+    day_col = _find_column(columns, ["day_of_week", "weekday", "день_недели"])
+    if day_col and "is_weekend" not in df.columns:
+        weekend_series = df[day_col].apply(_is_weekend_value)
+        if weekend_series.notna().any():
+            df["is_weekend"] = weekend_series
+
+    return df
+
+
 def pick_target(df: pd.DataFrame, target_arg: Optional[str]) -> str:
     if target_arg:
         if target_arg not in df.columns:
@@ -139,6 +217,12 @@ def infer_task(y: pd.Series, target_name: str) -> str:
     if pd.api.types.is_numeric_dtype(y) and y.nunique(dropna=True) > 10:
         return "regression"
     return "classification"
+
+
+def resolve_task(y: pd.Series, target_name: str, task_override: Optional[str]) -> str:
+    if task_override in {"classification", "regression"}:
+        return task_override
+    return infer_task(y, target_name)
 
 
 def build_preprocess(X: pd.DataFrame):
@@ -420,6 +504,7 @@ def compare_models_cv(
     model_names: Optional[List[str]] = None,
     cv: int = 3,
     random_state: int = 42,
+    task_override: Optional[str] = None,
 ) -> pd.DataFrame:
     df = normalize_columns(df)
     df = drop_empty_columns(df)
@@ -428,9 +513,10 @@ def compare_models_cv(
     X = df.drop(columns=[target])
     X = drop_identifier_columns(X)
     X = coerce_numeric_columns(X)
+    X = add_simple_features(X)
     y = df[target].copy()
 
-    task = infer_task(y, target)
+    task = resolve_task(y, target, task_override)
 
     if model_names is None:
         model_names = ["rf", "gb", "hgb"]
@@ -475,6 +561,7 @@ def train_and_evaluate(
     tune_cv: int = 3,
     run_eda_reports: bool = False,
     eda_dir: Optional[Path] = None,
+    task_override: Optional[str] = None,
 ) -> TrainResult:
     df = normalize_columns(df)
     df = drop_empty_columns(df)
@@ -484,9 +571,10 @@ def train_and_evaluate(
     X = df.drop(columns=[target])
     X = drop_identifier_columns(X)
     X = coerce_numeric_columns(X)
+    X = add_simple_features(X)
     y = df[target].copy()
 
-    task = infer_task(y, target)
+    task = resolve_task(y, target, task_override)
 
     if run_eda_reports:
         run_eda(df, target, eda_dir or Path("reports"))
