@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+MAX_BYTES=$((100 * 1024 * 1024)) # 100 MB
+failed=0
+
+while IFS= read -r -d '' file; do
+  size=$(git cat-file -s ":$file" 2>/dev/null || wc -c < "$file")
+  if [ "$size" -gt "$MAX_BYTES" ]; then
+    size_mb=$(( (size + 1048575) / 1048576 ))
+    echo "ERROR: $file is ${size_mb} MB (limit 100 MB)."
+    failed=1
+  fi
+done < <(git diff --cached --name-only --diff-filter=AM -z)
+
+if [ "$failed" -ne 0 ]; then
+  echo "Commit blocked: remove large files or store them outside Git."
+  exit 1
+fi

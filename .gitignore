@@ -1,0 +1,33 @@
+# Large local artifacts (keep out of git)
+sha256-*
+
+# Archives and disk images
+*.7z
+*.zip
+*.rar
+*.tar
+*.tar.gz
+*.tgz
+*.gz
+*.xz
+*.bz2
+*.iso
+*.dmg
+
+# Large binary/data/model artifacts
+*.bin
+*.parquet
+*.pkl
+*.joblib
+*.onnx
+*.h5
+*.pt
+*.pth
+*.ckpt
+*.npy
+*.npz
+*.sqlite
+*.db
+*.mp3
+*.mp4
+*.wav
