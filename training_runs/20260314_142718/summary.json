@@ -1,0 +1,135 @@
+{
+  "timestamp": "20260314_142718",
+  "task": "classification",
+  "target": "attendance_score",
+  "metrics": {
+    "accuracy": 0.45,
+    "f1_macro": 0.2142857142857143
+  },
+  "cv_metrics": null,
+  "best_params": null,
+  "synthetic_prediction": 0,
+  "model": "rf",
+  "train_params": {
+    "model": "rf",
+    "test_size": 0.2,
+    "cv": 0,
+    "tune": false,
+    "tune_iter": 25,
+    "tune_cv": 3,
+    "seed": 42
+  },
+  "feature_columns": [
+    "id",
+    "event_type",
+    "theme",
+    "day_of_week",
+    "season",
+    "duration_hours",
+    "budget_category",
+    "advance_days",
+    "has_online_stream",
+    "partner_involvement",
+    "avg_temp"
+  ],
+  "categorical_cols": [
+    "event_type",
+    "theme",
+    "day_of_week",
+    "season"
+  ],
+  "numeric_cols": [
+    "id",
+    "duration_hours",
+    "budget_category",
+    "advance_days",
+    "has_online_stream",
+    "partner_involvement",
+    "avg_temp"
+  ],
+  "feature_importance": [
+    {
+      "feature": "num__id",
+      "importance": 0.13263400582489657
+    },
+    {
+      "feature": "num__duration_hours",
+      "importance": 0.12065533675549237
+    },
+    {
+      "feature": "num__advance_days",
+      "importance": 0.11342005218429112
+    },
+    {
+      "feature": "num__avg_temp",
+      "importance": 0.10399489680316926
+    },
+    {
+      "feature": "num__budget_category",
+      "importance": 0.06494456066048049
+    },
+    {
+      "feature": "num__has_online_stream",
+      "importance": 0.027398106650372418
+    },
+    {
+      "feature": "num__partner_involvement",
+      "importance": 0.025344965939105686
+    },
+    {
+      "feature": "cat__day_of_week_вторник",
+      "importance": 0.025292882560472234
+    },
+    {
+      "feature": "cat__season_лето",
+      "importance": 0.02406576325579541
+    },
+    {
+      "feature": "cat__theme_народы Поволжья",
+      "importance": 0.021651306118550158
+    },
+    {
+      "feature": "cat__event_type_выставка",
+      "importance": 0.02143733275686335
+    },
+    {
+      "feature": "cat__event_type_концерт",
+      "importance": 0.021218591541913252
+    },
+    {
+      "feature": "cat__season_зима",
+      "importance": 0.020974233163544756
+    },
+    {
+      "feature": "cat__day_of_week_пятница",
+      "importance": 0.02052265421244904
+    },
+    {
+      "feature": "cat__theme_Сибири",
+      "importance": 0.020401462560519557
+    },
+    {
+      "feature": "cat__season_весна",
+      "importance": 0.02035235616246826
+    },
+    {
+      "feature": "cat__event_type_мастер-класс",
+      "importance": 0.02006501616253775
+    },
+    {
+      "feature": "cat__theme_Центральной России",
+      "importance": 0.019889046178293946
+    },
+    {
+      "feature": "cat__event_type_фестиваль",
+      "importance": 0.01966568939470395
+    },
+    {
+      "feature": "cat__season_осень",
+      "importance": 0.01939638904356279
+    }
+  ],
+  "files": [
+    "ai_event_dataset.xlsx"
+  ]
+}

@@ -5,3 +5,5 @@ matplotlib
 seaborn
 openpyxl
 joblib
+requests
+streamlit

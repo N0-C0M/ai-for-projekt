@@ -31,3 +31,9 @@ sha256-*
 *.mp3
 *.mp4
 *.wav
+
+# Local outputs
+reports/
+models/
+artifacts/
+.streamlit/
