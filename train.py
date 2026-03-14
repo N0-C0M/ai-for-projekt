@@ -50,7 +50,7 @@ def main() -> None:
         "--cv",
         type=int,
         default=0,
-        help="Если >0, запустить кросс-валидацию с заданным числом фолдов.",
+        help="Если >0, запустить кросс-валидацию с указанным числом фолдов.",
     )
     parser.add_argument(
         "--tune",
@@ -95,7 +95,7 @@ def main() -> None:
     parser.add_argument(
         "--no-reports",
         action="store_true",
-        help="Не сохранять метрики и важность признаков.",
+        help="Не сохранять метрики и важности признаков.",
     )
     parser.add_argument(
         "--save-model",
@@ -160,10 +160,12 @@ def main() -> None:
     args = parser.parse_args()
 
     data_path = Path(args.data)
+    # 1) Загрузка и нормализация данных
     df = load_data(data_path)
     df = normalize_columns(df)
     target = pick_target(df, args.target)
 
+    # 2) Обучение + оценка (с опциональным EDA и тюнингом)
     result = train_and_evaluate(
         df,
         target=target,
@@ -203,6 +205,7 @@ def main() -> None:
     print("Прогноз для синтетического примера:", result.synthetic_prediction)
 
     if not args.no_reports:
+        # 3) Сохранение метрик, отчётов и важности признаков
         save_reports(result, Path(args.report_dir))
 
         if args.cv and args.cv > 1:

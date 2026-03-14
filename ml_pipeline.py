@@ -83,6 +83,14 @@ def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def drop_identifier_columns(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    id_like = [col for col in df.columns if str(col).lower() == "id"]
+    if id_like:
+        df = df.drop(columns=id_like)
+    return df
+
+
 def drop_empty_columns(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     return df.dropna(axis=1, how="all")
@@ -418,6 +426,7 @@ def compare_models_cv(
     df = df.drop_duplicates().reset_index(drop=True)
     df = df.dropna(subset=[target]).reset_index(drop=True)
     X = df.drop(columns=[target])
+    X = drop_identifier_columns(X)
     X = coerce_numeric_columns(X)
     y = df[target].copy()
 
@@ -473,6 +482,7 @@ def train_and_evaluate(
 
     df = df.dropna(subset=[target]).reset_index(drop=True)
     X = df.drop(columns=[target])
+    X = drop_identifier_columns(X)
     X = coerce_numeric_columns(X)
     y = df[target].copy()
 
